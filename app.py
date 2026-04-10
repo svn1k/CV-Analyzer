@@ -273,7 +273,7 @@ def health():
         "model": str(WORKING_MODEL) if WORKING_MODEL else None,
     })
 
-
+@app.route("/")
 @app.route("/analyze", methods=["POST"])
 def analyze():
     data = request.json or {}
