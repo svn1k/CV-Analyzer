@@ -65,7 +65,7 @@ try:
 
     # Approve токенов при старте
     try:
-        approval = llm_client.ensure_opg_approval(opg_amount=0.1)
+        approval = llm_client.ensure_opg_approval(min_allowance=0.1)
         print(f"OPG approval: {approval}")
     except Exception as e:
         print(f"Approval warning: {e}")
@@ -275,7 +275,9 @@ def health():
     })
 @app.route("/ui")
 def ui():
-    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), "cv-analyzer.html")
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    print(f"Serving from: {base_dir}")  # увидим в логах
+    return send_from_directory(base_dir, "cv-analyzer.html")
 @app.route("/")
 def index():
     return jsonify({
