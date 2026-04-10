@@ -328,9 +328,12 @@ def analyze():
     return jsonify(result)
 
 
+# СТАЛО:
+# Probe models at startup (before first request)
+if OG_OK:
+    threading.Thread(target=probe_models, daemon=True).start()
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
     print(f"CV Analyzer on :{port} | OG: {'live' if OG_OK else 'demo'}")
-    if OG_OK:
-        probe_models()
     app.run(host="0.0.0.0", port=port, debug=False)
