@@ -274,6 +274,13 @@ def health():
     })
 
 @app.route("/")
+def index():
+    return jsonify({
+        "service": "CV Analyzer",
+        "status": "ok",
+        "og": OG_OK,
+        "endpoints": ["/health", "/analyze"]
+    })
 @app.route("/analyze", methods=["POST"])
 def analyze():
     data = request.json or {}
