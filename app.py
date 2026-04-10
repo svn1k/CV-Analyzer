@@ -8,6 +8,7 @@ import base64
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
+from flask import send_from_directory
 
 load_dotenv()
 app = Flask(__name__)
@@ -272,7 +273,9 @@ def health():
         "og": OG_OK,
         "model": str(WORKING_MODEL) if WORKING_MODEL else None,
     })
-
+@app.route("/ui")
+def ui():
+    return send_from_directory(".", "cv-analyzer.html")
 @app.route("/")
 def index():
     return jsonify({
