@@ -5,23 +5,32 @@ import time
 import asyncio
 import threading
 import base64
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
-from flask import send_from_directory
 
 load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# ── OpenGradient ──────────────────────────────────────────────────────────────
+# ── OpenGradient ─────────────────────────────────────────────────────────────
 OG_OK = False
 llm_client = None
+og = None
 WORKING_MODEL = None
+_ready = False
+_init_done = False
+_init_lock = threading.Lock()
 
-# Единый event loop в отдельном потоке
+MODEL_PRIORITY = [
+    "CLAUDE_HAIKU_4_5",
+    "CLAUDE_SONNET_4_5",
+    "CLAUDE_SONNET_4_6",
+    "GPT_5_MINI",
+]
+
+# ── Event loop ─────────────────────────────────────────────────────────────
 _loop = None
-_loop_thread = None
 
 def _start_loop():
     global _loop
@@ -29,101 +38,100 @@ def _start_loop():
     asyncio.set_event_loop(_loop)
     _loop.run_forever()
 
-def _run(coro):
-    """Запустить корутину в фоновом event loop и дождаться результата."""
-    future = asyncio.run_coroutine_threadsafe(coro, _loop)
-    return future.result(timeout=120)
+def _ensure_loop():
+    global _loop
+    if _loop is None:
+        t = threading.Thread(target=_start_loop, daemon=True)
+        t.start()
+        deadline = time.time() + 10
+        while _loop is None and time.time() < deadline:
+            time.sleep(0.05)
 
-MODEL_PRIORITY = [
-    "GEMINI_2_5_FLASH_LITE",
-    "GEMINI_2_5_FLASH",
-    "CLAUDE_HAIKU_4_5",
-    "GPT_5_MINI",
-    "CLAUDE_SONNET_4_5",
-    "CLAUDE_SONNET_4_6",
-    "GEMINI_2_5_PRO",
-    "CLAUDE_OPUS_4_5",
-    "GPT_5",
-    "O4_MINI",
-]
+def _run(coro, timeout=120):
+    _ensure_loop()
+    if _loop is None:
+        raise RuntimeError("Event loop not ready")
+    async def _with_timeout():
+        return await asyncio.wait_for(coro, timeout=timeout)
+    return asyncio.run_coroutine_threadsafe(_with_timeout(), _loop).result(timeout=timeout + 5)
 
-try:
-    import opengradient as og
-    import ssl
-    import urllib3
-
-    ssl._create_default_https_context = ssl._create_unverified_context
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-    # Запускаем фоновый event loop
-    _loop_thread = threading.Thread(target=_start_loop, daemon=True)
-    _loop_thread.start()
-    time.sleep(0.2)  # ждём пока loop запустится
-
-    private_key = os.environ["OG_PRIVATE_KEY"]
-    llm_client = og.LLM(private_key=private_key)
-
-    # Approve токенов при старте
+# ── OG init ────────────────────────────────────────────────────────────────
+def _init_og():
+    global OG_OK, llm_client, og, _ready, _init_done, WORKING_MODEL
+    with _init_lock:
+        if _init_done:
+            return
+        _init_done = True
     try:
-        approval = llm_client.ensure_opg_approval(min_allowance=1)
-        print(f"OPG approval: {approval}")
+        import opengradient as _og
+        import ssl
+        import urllib3
+        og = _og
+        ssl._create_default_https_context = ssl._create_unverified_context
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        private_key = os.environ.get("OG_PRIVATE_KEY", "")
+        if not private_key:
+            raise ValueError("OG_PRIVATE_KEY not set")
+        print(f"OG_PRIVATE_KEY found: {private_key[:6]}...")
+        llm_client = og.LLM(private_key=private_key)
+        try:
+            # Используем min_allowance=0.1 как в работающем скрипте
+            approval = llm_client.ensure_opg_approval(min_allowance=0.1)
+            print(f"OPG approval: {approval}")
+        except Exception as e:
+            print(f"Approval warning (continuing): {e}")
+        OG_OK = True
+        print("OG connected — selecting model...")
+        _pick_model()
     except Exception as e:
-        print(f"Approval warning: {e}")
+        import traceback
+        print(f"OG init failed: {e}\n{traceback.format_exc()}")
+    finally:
+        _ready = True
+        print(f"OG ready. OG_OK={OG_OK}, model={WORKING_MODEL}")
 
-    OG_OK = True
-    print("OG connected")
-except Exception as e:
-    print(f"Demo mode: {e}")
-    OG_OK = False
-    llm_client = None
-
-
-# ── Поиск рабочей модели ──────────────────────────────────────────────────────
-def probe_models():
+def _pick_model():
     global WORKING_MODEL
     if not OG_OK or llm_client is None:
         return
-
-    print("Probing models...")
     for name in MODEL_PRIORITY:
         if not hasattr(og.TEE_LLM, name):
             continue
-        model_enum = getattr(og.TEE_LLM, name)
+        model = getattr(og.TEE_LLM, name)
         try:
-            print(f"Testing {name}...")
+            print(f"  Trying {name}...")
             result = _run(llm_client.chat(
-                model=model_enum,
-                messages=[{"role": "user", "content": "Reply: OK"}],
+                model=model,
+                messages=[{"role": "user", "content": "Say: OK"}],
                 max_tokens=5,
                 temperature=0.0,
-            ))
-            raw = extract_raw(result)
-            if raw.strip():
-                WORKING_MODEL = model_enum
-                print(f"Using model: {name}")
+            ), timeout=90)
+            raw = _extract_raw(result)
+            if raw and raw.strip():
+                WORKING_MODEL = model
+                print(f"✓ Model selected: {name}")
                 return
         except Exception as e:
-            print(f"  FAIL {name}: {e}")
-    print("No working model found.")
+            print(f"  {name} failed: {e}")
+    print("WARNING: No working model found")
 
+def _ensure_og():
+    if not _init_done:
+        t = threading.Thread(target=_init_og, daemon=True)
+        t.start()
+        t.join(timeout=180)
 
-# ── Извлечение текста из ответа ───────────────────────────────────────────────
-def extract_raw(result):
+# ── Helpers ────────────────────────────────────────────────────────────────
+def _extract_raw(result):
     if not result:
         return ""
-    co = getattr(result, 'chat_output', None)
-    if co:
-        if isinstance(co, dict):
-            for k in ('content', 'text', 'message', 'response', 'output'):
-                if co.get(k):
-                    return str(co[k])
-        elif isinstance(co, str):
-            return co
-    comp = getattr(result, 'completion_output', None)
-    if comp and str(comp).strip():
-        return str(comp)
-    if hasattr(result, 'text'):
-        return result.text
+    for attr in ['chat_output', 'completion_output', 'content', 'text', 'output']:
+        val = getattr(result, attr, None)
+        if val:
+            if isinstance(val, dict) and val.get('content'):
+                return str(val['content'])
+            if isinstance(val, str) and val.strip():
+                return val
     for attr in dir(result):
         if attr.startswith('_'):
             continue
@@ -131,12 +139,11 @@ def extract_raw(result):
             val = getattr(result, attr)
             if callable(val):
                 continue
-            if isinstance(val, str) and ('<JSON>' in val or '"overall_score"' in val):
+            if isinstance(val, str) and val.strip() and len(val) > 2:
                 return val
         except:
             pass
     return ""
-
 
 def parse_json(raw):
     if not raw or not raw.strip():
@@ -155,14 +162,13 @@ def parse_json(raw):
             pass
     return {"error": "Parse failed", "raw": raw[:300]}
 
-
 def call_llm(messages, retries=3):
     global WORKING_MODEL
+    _ensure_og()
     if not OG_OK or llm_client is None:
         return {"error": "OpenGradient not available"}
-
     if WORKING_MODEL is None:
-        probe_models()
+        _pick_model()
     if WORKING_MODEL is None:
         return {"error": "No working model found"}
 
@@ -175,8 +181,8 @@ def call_llm(messages, retries=3):
                 messages=messages,
                 max_tokens=3000,
                 temperature=0.3,
-            ))
-            raw = extract_raw(result)
+            ), timeout=120)
+            raw = _extract_raw(result)
             if not raw.strip():
                 last_error = "Empty response"
                 time.sleep(2)
@@ -186,7 +192,7 @@ def call_llm(messages, retries=3):
                 last_error = parsed["error"]
                 time.sleep(1)
                 continue
-            tx = getattr(result, "transaction_hash", None)
+            tx = getattr(result, "transaction_hash", None) or getattr(result, "payment_hash", None)
             if tx:
                 parsed["proof"] = {
                     "transaction_hash": tx,
@@ -198,16 +204,14 @@ def call_llm(messages, retries=3):
             print(f"LLM error attempt {attempt+1}: {e}")
             if "402" in str(e):
                 WORKING_MODEL = None
-                probe_models()
+                _pick_model()
                 if WORKING_MODEL is None:
                     break
             else:
                 time.sleep(2)
-
     return {"error": f"All attempts failed: {last_error}"}
 
-
-# ── System prompt ─────────────────────────────────────────────────────────────
+# ── System prompt (CV analyzer) ────────────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert HR consultant and career coach. Analyze the provided CV/resume and reply ONLY with valid JSON inside <JSON>...</JSON> tags. No text outside.
 
 Return this exact structure:
@@ -264,30 +268,34 @@ Rules:
 - Be honest and constructive, not generic
 """
 
-
 # ── Routes ────────────────────────────────────────────────────────────────────
-@app.route("/health")
-def health():
-    return jsonify({
-        "status": "ok",
-        "og": OG_OK,
-        "model": str(WORKING_MODEL) if WORKING_MODEL else None,
-    })
-@app.route("/ui")
-def ui():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    html_path = os.path.join(base_dir, "cv-analyzer.html")
-    print(f"Serving HTML from: {html_path} | exists: {os.path.exists(html_path)}")
-    with open(html_path, "r", encoding="utf-8") as f:
-        return f.read(), 200, {"Content-Type": "text/html; charset=utf-8"}
 @app.route("/")
 def index():
     return jsonify({
         "service": "CV Analyzer",
         "status": "ok",
         "og": OG_OK,
-        "endpoints": ["/health", "/analyze"]
+        "endpoints": ["/health", "/analyze", "/ui"]
     })
+
+@app.route("/health")
+def health():
+    return jsonify({
+        "status": "ok",
+        "og": OG_OK,
+        "ready": _ready,
+        "model": str(WORKING_MODEL) if WORKING_MODEL else None,
+    })
+
+@app.route("/ui")
+def ui():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    html_path = os.path.join(base_dir, "cv-analyzer.html")
+    if os.path.exists(html_path):
+        return send_from_directory(base_dir, "cv-analyzer.html")
+    else:
+        return jsonify({"error": "UI file not found"}), 404
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
     data = request.json or {}
@@ -300,44 +308,28 @@ def analyze():
 
     print(f"\nAnalyzing CV | target_role: '{target_role}'")
 
+    # Формируем текстовое сообщение, так как мультимодальность не везде поддерживается
     user_content = []
-
-    if pdf_base64:
-        try:
-            user_content.append({
-                "type": "document",
-                "source": {
-                    "type": "base64",
-                    "media_type": "application/pdf",
-                    "data": pdf_base64
-                }
-            })
-            print("PDF attached")
-        except Exception as e:
-            print(f"PDF error: {e}")
-            return jsonify({"error": "Failed to process PDF"}), 400
-
     if cv_text:
-        user_content.append({"type": "text", "text": f"CV TEXT:\n\n{cv_text}"})
-
+        user_content.append(f"CV TEXT:\n\n{cv_text}")
+    if pdf_base64:
+        # Лучше не отправлять PDF как document, а извлечь текст заранее (но для простоты предупредим)
+        user_content.append("\n[PDF content was provided but text extraction is recommended on client side]")
+        print("Warning: PDF binary not directly supported by all models. Consider extracting text client-side.")
     role_note = f"\n\nTarget role: {target_role}" if target_role else ""
-    user_content.append({"type": "text", "text": f"Please analyze this CV and return the JSON.{role_note}"})
-
+    user_content.append(f"Please analyze this CV and return the JSON.{role_note}")
+    
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_content if len(user_content) > 1 else user_content[0]["text"]}
+        {"role": "user", "content": "\n".join(user_content)}
     ]
 
     result = call_llm(messages)
     return jsonify(result)
 
-
-# СТАЛО:
-# Probe models at startup (before first request)
-if OG_OK:
-    threading.Thread(target=probe_models, daemon=True).start()
-
+# ── Main ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
-    print(f"CV Analyzer on :{port} | OG: {'live' if OG_OK else 'demo'}")
+    _ensure_og()  # синхронная инициализация перед запуском
+    print(f"CV Analyzer on :{port} | OG: {'live' if OG_OK else 'demo'}, model: {WORKING_MODEL}")
     app.run(host="0.0.0.0", port=port, debug=False)
