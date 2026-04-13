@@ -1283,7 +1283,7 @@
                 requestAnimationFrame(loop);
             };
             loop();
-        })(); const API = API_BASE;
+        })();
 
         /* ══ TYPEWRITER ══ */
         (() => {
@@ -1298,7 +1298,7 @@
                 }
             };
             setTimeout(type, 600);
-        })(); const API = API_BASE;
+        })();
 
         /* ══ NAVIGATION ══ */
         function showLanding() {
@@ -1321,11 +1321,9 @@
         }
 
         /* ══ UPLOAD LOGIC ══ */
-        const API_BASE = (() => {
-            const h = location.hostname;
-            if (h === 'localhost' || h === '127.0.0.1') return 'http://localhost:5001';
-            return '';
-        })(); const API = API_BASE;
+        const API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+            ? 'http://localhost:5001'
+            : '';
         let pdfB64 = null, tab = 'text';
 
         function sw(t, el) {
@@ -1379,17 +1377,13 @@
             const btn = document.getElementById('go-btn');
             btn.disabled = true; btn.textContent = 'Analyzing...';
 
-            // Cancel any previous pending request
             if (_analyzeController) _analyzeController.abort();
             _analyzeController = new AbortController();
             const signal = _analyzeController.signal;
-
-            // Timeout: abort after 90 seconds
             const timeoutId = setTimeout(() => _analyzeController.abort(), 90000);
 
             showResults();
 
-            // Countdown timer display
             let elapsed = 0;
             const timerInterval = setInterval(() => {
                 elapsed++;
@@ -1400,10 +1394,10 @@
             document.getElementById('res-out').innerHTML = `
                 <div class="scanning">
                   <div class="scan-title">Reading your CV...</div>
-                  <div class="scan-sub">OpenGradient TEE is analyzing your resume · <span id="scan-elapsed">0s</span> elapsed</div>
+                  <div class="scan-sub">OpenGradient TEE is analyzing your resume &middot; <span id="scan-elapsed">0s</span> elapsed</div>
                   <div class="scan-bar"><div class="scan-fill"></div></div>
                   <div style="margin-top:2rem">
-                    <button onclick="cancelAnalyze()" style="background:none;border:1px solid var(--border);color:var(--muted);padding:6px 18px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:.72rem;transition:color .15s" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">Cancel</button>
+                    <button onclick="cancelAnalyze()" style="background:none;border:1px solid var(--border);color:var(--muted);padding:6px 18px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:.72rem">Cancel</button>
                   </div>
                 </div>`;
 
@@ -1426,18 +1420,18 @@
                 if (e.name === 'AbortError') {
                     document.getElementById('res-out').innerHTML = `
                         <div style="text-align:center;padding:3rem 0">
-                          <div style="font-size:2rem;margin-bottom:1rem">⏱</div>
+                          <div style="font-size:2rem;margin-bottom:1rem">&#x23F1;</div>
                           <div style="color:var(--silver);font-size:.95rem;font-weight:600;margin-bottom:.5rem">Request timed out</div>
-                          <div style="color:var(--muted);font-size:.78rem;margin-bottom:2rem;line-height:1.7">The server is taking too long to respond.<br>This usually means the model is still loading — try again in a moment.</div>
-                          <button onclick="showUpload()" style="background:var(--accent);color:#fff;border:none;padding:10px 28px;border-radius:10px;cursor:pointer;font-family:inherit;font-size:.82rem;font-weight:600">Try again →</button>
+                          <div style="color:var(--muted);font-size:.78rem;margin-bottom:2rem;line-height:1.7">The server is taking too long.<br>The model may still be loading — try again in a moment.</div>
+                          <button onclick="showUpload()" style="background:var(--accent);color:#fff;border:none;padding:10px 28px;border-radius:10px;cursor:pointer;font-family:inherit;font-size:.82rem;font-weight:600">Try again &rarr;</button>
                         </div>`;
                 } else {
                     document.getElementById('res-out').innerHTML = `
                         <div style="text-align:center;padding:3rem 0">
-                          <div style="font-size:2rem;margin-bottom:1rem">⚠️</div>
+                          <div style="font-size:2rem;margin-bottom:1rem">&#x26A0;&#xFE0F;</div>
                           <div style="color:var(--silver);font-size:.95rem;font-weight:600;margin-bottom:.5rem">Something went wrong</div>
                           <div style="color:var(--muted);font-size:.78rem;margin-bottom:2rem;font-family:'JetBrains Mono',monospace">${e.message}</div>
-                          <button onclick="showUpload()" style="background:var(--accent);color:#fff;border:none;padding:10px 28px;border-radius:10px;cursor:pointer;font-family:inherit;font-size:.82rem;font-weight:600">Try again →</button>
+                          <button onclick="showUpload()" style="background:var(--accent);color:#fff;border:none;padding:10px 28px;border-radius:10px;cursor:pointer;font-family:inherit;font-size:.82rem;font-weight:600">Try again &rarr;</button>
                         </div>`;
                 }
             }
@@ -1563,7 +1557,7 @@
                 d.textContent = j;
                 jt.appendChild(d);
             });
-        })(); const API = API_BASE;
+        })();
     </script>
 </body>
 </html>
