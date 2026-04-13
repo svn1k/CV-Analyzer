@@ -1283,7 +1283,7 @@
                 requestAnimationFrame(loop);
             };
             loop();
-        })();
+        })(); const API = API_BASE;
 
         /* ══ TYPEWRITER ══ */
         (() => {
@@ -1298,7 +1298,7 @@
                 }
             };
             setTimeout(type, 600);
-        })();
+        })(); const API = API_BASE;
 
         /* ══ NAVIGATION ══ */
         function showLanding() {
@@ -1321,7 +1321,11 @@
         }
 
         /* ══ UPLOAD LOGIC ══ */
-        const API = 'cv-analyzer-sgyj.onrender.com';
+        const API_BASE = (() => {
+            const h = location.hostname;
+            if (h === 'localhost' || h === '127.0.0.1') return 'http://localhost:5001';
+            return '';
+        })(); const API = API_BASE;
         let pdfB64 = null, tab = 'text';
 
         function sw(t, el) {
@@ -1559,7 +1563,7 @@
                 d.textContent = j;
                 jt.appendChild(d);
             });
-        })();
+        })(); const API = API_BASE;
     </script>
 </body>
 </html>
