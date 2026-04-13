@@ -1321,7 +1321,7 @@
         }
 
         /* ══ UPLOAD LOGIC ══ */
-        const API = 'https://cv-analyzer-sgvj.onrender.com';
+        const API = 'http://localhost:5001';
         let pdfB64 = null, tab = 'text';
 
         function sw(t, el) {
@@ -1359,6 +1359,8 @@
         });
 
         /* ══ ANALYZE ══ */
+        let _analyzeController = null;
+
         async function analyze() {
             const role = document.getElementById('role').value.trim();
             let cvText = '', pdf = null;
@@ -1373,28 +1375,73 @@
             const btn = document.getElementById('go-btn');
             btn.disabled = true; btn.textContent = 'Analyzing...';
 
+            // Cancel any previous pending request
+            if (_analyzeController) _analyzeController.abort();
+            _analyzeController = new AbortController();
+            const signal = _analyzeController.signal;
+
+            // Timeout: abort after 90 seconds
+            const timeoutId = setTimeout(() => _analyzeController.abort(), 90000);
+
             showResults();
+
+            // Countdown timer display
+            let elapsed = 0;
+            const timerInterval = setInterval(() => {
+                elapsed++;
+                const el = document.getElementById('scan-elapsed');
+                if (el) el.textContent = elapsed + 's';
+            }, 1000);
+
             document.getElementById('res-out').innerHTML = `
                 <div class="scanning">
                   <div class="scan-title">Reading your CV...</div>
-                  <div class="scan-sub">OpenGradient TEE is analyzing your resume</div>
+                  <div class="scan-sub">OpenGradient TEE is analyzing your resume · <span id="scan-elapsed">0s</span> elapsed</div>
                   <div class="scan-bar"><div class="scan-fill"></div></div>
+                  <div style="margin-top:2rem">
+                    <button onclick="cancelAnalyze()" style="background:none;border:1px solid var(--border);color:var(--muted);padding:6px 18px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:.72rem;transition:color .15s" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">Cancel</button>
+                  </div>
                 </div>`;
 
             try {
                 const r = await fetch(API + '/analyze', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ cv_text: cvText, pdf_base64: pdf, target_role: role })
+                    body: JSON.stringify({ cv_text: cvText, pdf_base64: pdf, target_role: role }),
+                    signal
                 });
+                clearTimeout(timeoutId);
+                clearInterval(timerInterval);
                 if (!r.ok) throw new Error('Server error ' + r.status);
                 const d = await r.json();
                 if (d.error) throw new Error(d.error);
                 renderResults(d);
             } catch (e) {
-                document.getElementById('res-out').innerHTML = `<div style="color:var(--red);font-size:.85rem;padding:2rem 0">Error: ${e.message}</div>`;
+                clearTimeout(timeoutId);
+                clearInterval(timerInterval);
+                if (e.name === 'AbortError') {
+                    document.getElementById('res-out').innerHTML = `
+                        <div style="text-align:center;padding:3rem 0">
+                          <div style="font-size:2rem;margin-bottom:1rem">⏱</div>
+                          <div style="color:var(--silver);font-size:.95rem;font-weight:600;margin-bottom:.5rem">Request timed out</div>
+                          <div style="color:var(--muted);font-size:.78rem;margin-bottom:2rem;line-height:1.7">The server is taking too long to respond.<br>This usually means the model is still loading — try again in a moment.</div>
+                          <button onclick="showUpload()" style="background:var(--accent);color:#fff;border:none;padding:10px 28px;border-radius:10px;cursor:pointer;font-family:inherit;font-size:.82rem;font-weight:600">Try again →</button>
+                        </div>`;
+                } else {
+                    document.getElementById('res-out').innerHTML = `
+                        <div style="text-align:center;padding:3rem 0">
+                          <div style="font-size:2rem;margin-bottom:1rem">⚠️</div>
+                          <div style="color:var(--silver);font-size:.95rem;font-weight:600;margin-bottom:.5rem">Something went wrong</div>
+                          <div style="color:var(--muted);font-size:.78rem;margin-bottom:2rem;font-family:'JetBrains Mono',monospace">${e.message}</div>
+                          <button onclick="showUpload()" style="background:var(--accent);color:#fff;border:none;padding:10px 28px;border-radius:10px;cursor:pointer;font-family:inherit;font-size:.82rem;font-weight:600">Try again →</button>
+                        </div>`;
+                }
             }
             btn.disabled = false; btn.textContent = 'Analyze CV →';
+        }
+
+        function cancelAnalyze() {
+            if (_analyzeController) _analyzeController.abort();
         }
 
         /* ══ RENDER RESULTS ══ */
